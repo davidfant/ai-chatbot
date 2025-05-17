@@ -1,12 +1,8 @@
-import {
-  appendClientMessage,
-  appendResponseMessages,
-  createDataStream,
-  smoothStream,
-  streamText,
-} from 'ai';
 import { auth, type UserType } from '@/app/(auth)/auth';
-import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
+import { entitlementsByUserType } from '@/lib/ai/entitlements';
+import { systemPrompt, type RequestHints } from '@/lib/ai/prompts';
+import { myProvider } from '@/lib/ai/providers';
+import { isProductionEnvironment } from '@/lib/constants';
 import {
   createStreamId,
   deleteChatById,
@@ -17,25 +13,27 @@ import {
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
+import type { Chat } from '@/lib/db/schema';
+import { ChatSDKError } from '@/lib/errors';
 import { generateUUID, getTrailingMessageId } from '@/lib/utils';
-import { generateTitleFromUserMessage } from '../../actions';
-import { createDocument } from '@/lib/ai/tools/create-document';
-import { updateDocument } from '@/lib/ai/tools/update-document';
-import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
-import { getWeather } from '@/lib/ai/tools/get-weather';
-import { isProductionEnvironment } from '@/lib/constants';
-import { myProvider } from '@/lib/ai/providers';
-import { entitlementsByUserType } from '@/lib/ai/entitlements';
-import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
+import {
+  appendClientMessage,
+  appendResponseMessages,
+  createDataStream,
+  experimental_createMCPClient,
+  smoothStream,
+  streamText,
+} from 'ai';
+import { Experimental_StdioMCPTransport } from 'ai/mcp-stdio';
+import { differenceInSeconds } from 'date-fns';
+import { after } from 'next/server';
 import {
   createResumableStreamContext,
   type ResumableStreamContext,
 } from 'resumable-stream';
-import { after } from 'next/server';
-import type { Chat } from '@/lib/db/schema';
-import { differenceInSeconds } from 'date-fns';
-import { ChatSDKError } from '@/lib/errors';
+import { generateTitleFromUserMessage } from '../../actions';
+import { postRequestBodySchema, type PostRequestBody } from './schema';
 
 export const maxDuration = 60;
 
@@ -60,6 +58,13 @@ function getStreamContext() {
 
   return globalStreamContext;
 }
+
+const browserMcpClientPromise = await experimental_createMCPClient({
+  transport: new Experimental_StdioMCPTransport({
+    command: 'npx',
+    args: ['@playwright/mcp@latest'],
+  }),
+});
 
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
@@ -144,6 +149,9 @@ export async function POST(request: Request) {
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
+    const browserMcpClient = await browserMcpClientPromise;
+    const browserMcpClientTools = await browserMcpClient.tools();
+
     const stream = createDataStream({
       execute: (dataStream) => {
         const result = streamText({
@@ -151,25 +159,26 @@ export async function POST(request: Request) {
           system: systemPrompt({ selectedChatModel, requestHints }),
           messages,
           maxSteps: 5,
-          experimental_activeTools:
-            selectedChatModel === 'chat-model-reasoning'
-              ? []
-              : [
-                  'getWeather',
-                  'createDocument',
-                  'updateDocument',
-                  'requestSuggestions',
-                ],
+          // experimental_activeTools:
+          //   selectedChatModel === 'chat-model-reasoning'
+          //     ? []
+          //     : [
+          //         'getWeather',
+          //         'createDocument',
+          //         'updateDocument',
+          //         'requestSuggestions',
+          //       ],
           experimental_transform: smoothStream({ chunking: 'word' }),
           experimental_generateMessageId: generateUUID,
           tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
+            // getWeather,
+            // createDocument: createDocument({ session, dataStream }),
+            // updateDocument: updateDocument({ session, dataStream }),
+            // requestSuggestions: requestSuggestions({
+            //   session,
+            //   dataStream,
+            // }),
+            ...browserMcpClientTools
           },
           onFinish: async ({ response }) => {
             if (session.user?.id) {

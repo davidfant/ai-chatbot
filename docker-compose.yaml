@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: postgres-ai-chatbot
+    restart: always
+    environment:
+      # change these to suit your setup (or use an .env file)
+      POSTGRES_USER: ai-chatbot
+      POSTGRES_PASSWORD: ai-chatbot
+      POSTGRES_DB: ai-chatbot
+    ports:
+      - "5433:5432" # exposes container's 5432 on your host
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai-chatbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
